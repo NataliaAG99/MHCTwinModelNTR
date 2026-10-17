@@ -1,0 +1,602 @@
+#########################
+#
+# MHC heritability study
+# 
+# Data cleaning, preparation and multivariate ACE twin analysis
+#
+# 01/08/2025; R version 4.3.2
+#
+#########################
+# Preparing the environment
+## ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+rm(list=ls(all=TRUE)) #Delete every previous object in the environment
+
+
+#### Install and load packages ####
+## First specify the packages of interest
+packages = c("OpenMx", "psych", "umx", "haven", "readxl", "dplyr", "ggplot2",
+             "lme4", "grid", "reshape2", "here", "moments", "foreign", "gee", "tidyr",
+             "ISLR", "polycor", "tidyverse", "broom", "mosaic", "ggcorrplot")
+
+## Now load or install&load all
+package.check <- lapply(
+  packages,
+  FUN = function(x) {
+    if (!require(x, character.only = TRUE)) {
+      install.packages(x, dependencies = TRUE)
+      library(x, character.only = TRUE)
+    }
+  }
+)
+
+
+# Set the directory
+#
+#
+# setwd("C:/Users/vgs055/OneDrive - Vrije Universiteit Amsterdam/2_Projecten/2025_Empathy heritability/2_Data analysis/2.2_Input")
+#
+# setwd("C:/Users/naa840/OneDrive - Vrije Universiteit Amsterdam/Nueva carpeta/MHC/03. Data/")
+setwd("/data/natalia/MHC/")
+
+#########################
+# Load the data
+dades <- read.spss("PHE_20250701_5055_LL.sav", to.data.frame=T, use.value.labels = F) #use.value.labels=F
+describe(dades)
+summary(dades)
+
+#Birthorder for 6618 i
+# Twinzyg for 6517 i
+table(dades$role) #role 1 for twins(multiples)
+#role =1 --> 6619 i
+table(dades$Extension) #Ext 1 and 2 for twins
+# ext =1 --> 3338 i; ext = 2 --> 3191 i; total = 6529i
+table(dades$birthorder)
+# birthorder = 1 --> 3354; birthorder = 2 --> 3222
+
+twin_df <- dades[!is.na(dades$twzyg),] #6517i
+
+sum(is.na(twin_df$Extension)) # 0 NA in Extension
+sum(is.na(twin_df$birthorder)) # 35 NA
+
+table(twin_df$birthorder, twin_df$Extension, useNA = "ifany") #They match so we'll use extension (less NA)
+
+## Create the indices for flo and empathy
+
+# Flourising is the sum up of the items only if they have 1 or none missing values
+flo_vars <- c("flo_a14", "flo_b14", "flo_c14", "flo_d14", "flo_e14", "flo_f14", "flo_g14", "flo_h14")
+twin_df$flo14 <- ifelse(
+  rowSums(is.na(twin_df[flo_vars])) < 2,
+  rowSums(twin_df[flo_vars], na.rm = TRUE),
+  NA
+)
+sum(is.na(twin_df$flo14)) # 891 NA in flo14
+
+
+# MHC is the average of the items
+# Define subscale item groups
+mhc_e_vars <- c("mhca14", "mhcb14", "mhcc14")                 # Emotional well-being
+mhc_s_vars <- c("mhcd14", "mhce14", "mhcf14", "mhcg14", "mhch14") # Social well-being
+mhc_p_vars <- c("mhci14", "mhcj14", "mhck14", "mhcl14", "mhcm14", "mhcn14") # Psychological well-being
+
+# Compute subscale means with missingness rule (≤ 2 missing)
+twin_df$mhc_e_14 <- ifelse(
+  rowSums(is.na(twin_df[mhc_e_vars])) <= 1,
+  rowMeans(twin_df[mhc_e_vars], na.rm = TRUE),
+  NA
+)
+
+twin_df$mhc_s_14 <- ifelse(
+  rowSums(is.na(twin_df[mhc_s_vars])) <= 1,
+  rowMeans(twin_df[mhc_s_vars], na.rm = TRUE),
+  NA
+)
+
+twin_df$mhc_p_14 <- ifelse(
+  rowSums(is.na(twin_df[mhc_p_vars])) <= 1,
+  rowMeans(twin_df[mhc_p_vars], na.rm = TRUE),
+  NA
+)
+
+# Optional: check how many NAs in each
+colSums(is.na(twin_df[, c("mhc_e_14", "mhc_s_14", "mhc_p_14")]))
+# mhc_e_14 mhc_s_14 mhc_p_14 
+# 1184     1214     1222
+# sum(is.na(twin_df$mhc14)) # 1224 NA in mhc14
+subset(twin_df, mhc_p_14 == 0) 
+
+
+# Descriptives of the wb variables
+describe(twin_df[,c("levenc14", "sat14", "hap14", "flo14", "mhc_e_14", "mhc_s_14", "mhc_p_14")])
+# Histogram of the wb variables
+# cvd1
+layo=matrix(1:8,2,4)
+layout(layo)
+# cvd2
+hist(twin_df$levenc14, main="QoL", xlab="Quality of Life", col="lightblue")
+hist(twin_df$sat14, main="Satisfaction", xlab="Satisfaction", col="lightblue")
+hist(twin_df$hap14, main="Happiness", xlab="Happiness", col="lightblue")
+hist(twin_df$flo14, main="Flourishing", xlab="Flourishing", col="lightblue")
+hist(twin_df$mhc_e_14, main="Emotional MHC", xlab="MHC", col="lightblue")
+hist(twin_df$mhc_s_14, main="Social MHC", xlab="MHC", col="lightblue")
+hist(twin_df$mhc_p_14, main="Psychological MHC", xlab="MHC", col="lightblue")
+
+#
+# cvd1
+hist(twin_df$age14, xlab="age14", col="red")
+# cvd2
+#
+# Scale the variables
+twin_df$qol_sc <- scale(twin_df$levenc14)
+twin_df$sat_sc <- scale(twin_df$sat14)
+twin_df$hap_sc <- scale(twin_df$hap14)
+twin_df$flo_sc <- scale(twin_df$flo14)
+twin_df$mhc_e_sc <- scale(twin_df$mhc_e_14)
+twin_df$mhc_s_sc <- scale(twin_df$mhc_s_14)
+twin_df$mhc_p_sc <- scale(twin_df$mhc_p_14)
+
+#
+#Re-code Sex
+twin_df$sex <- twin_df$sex - 1
+#
+#Create Age scaled (divided by 100)
+twin_df$Age_sc <- (twin_df$age14)/100
+#
+# Select the relevant columns for the twin data
+data_twins <- subset(twin_df, select=-c(role, multiple_type, birthorder,
+                                        famzyg, mult_ext, N_mult_fam, mult_id_fam, 
+                                        in_AS_14, version14, flo_a14, flo_b14, 
+                                        flo_c14, flo_d14, flo_e14, flo_f14, flo_g14, 
+                                        flo_h14, levenc14, mhca14, mhcb14, mhcc14, mhcd14, 
+                                        mhce14, mhcf14, mhcg14, mhch14, mhci14, mhcj14, 
+                                        mhck14, mhcl14, mhcm14, mhcn14, sat14, hap14, 
+                                        flo14, mhc_e_14, mhc_s_14, mhc_p_14))
+
+# # Remove the original twin_df to save memory
+rm(twin_df) 
+rm(dades)
+#
+#
+sum(is.na(data_twins$twzyg))
+#
+#Remove the multiples
+data_twins <- subset(data_twins, !Extension %in% c(3, 4, 5))
+#
+#Keep the individuals with all data available (complete cases)
+data_twins <- data_twins[complete.cases(data_twins[,c('qol_sc', 'sat_sc', 'hap_sc', 'flo_sc', 'mhc_e_sc', 'mhc_s_sc', 'mhc_p_sc')]),]
+#
+#cvd1
+#
+rph1 = summary(lm(qol_sc~Age_sc + sex, data=data_twins)) # data_twins[,c('qol_sc', 'sat_sc', 'hap_sc', 'flo_sc', 'emp_sc')]))
+rph2 = summary(lm(sat_sc~Age_sc + sex, data=data_twins))
+rph3 = summary(lm(hap_sc~Age_sc + sex, data=data_twins))
+rph4 = summary(lm(flo_sc~Age_sc + sex, data=data_twins))
+rph5 = summary(lm(mhc_e_sc~Age_sc + sex, data=data_twins))
+rph6 = summary(lm(mhc_s_sc~Age_sc + sex, data=data_twins))
+rph7 = summary(lm(mhc_p_sc~Age_sc + sex, data=data_twins))
+
+R2s = c(rph1$r.square,rph2$r.square,rph3$r.square,rph4$r.square,rph5$r.square,rph6$r.square,rph7$r.square) 
+parsb0 = c(
+  rph1$coefficients[1,1],
+  rph2$coefficients[1,1],
+  rph3$coefficients[1,1],
+  rph4$coefficients[1,1],
+  rph5$coefficients[1,1],
+  rph6$coefficients[1,1],
+  rph7$coefficients[1,1])
+parsbage = c( 
+  rph1$coefficients[2,1],
+  rph2$coefficients[2,1],
+  rph3$coefficients[2,1],
+  rph4$coefficients[2,1],
+  rph5$coefficients[2,1],
+  rph6$coefficients[2,1],
+  rph7$coefficients[2,1])
+parsbsex = c( 
+  rph1$coefficients[3,1],
+  rph2$coefficients[3,1],
+  rph3$coefficients[3,1],
+  rph4$coefficients[3,1],
+  rph5$coefficients[3,1],
+  rph6$coefficients[3,1],
+  rph7$coefficients[3,1])
+# cvd2
+#
+#
+length(unique(data_twins$FamilyNumber)) #4188 families, 5212 i
+
+table(as.data.frame(table(data_twins$FamilyNumber))[,2]) #Number of twins per family ## 2 --> 1024 complete pairs
+
+table(data_twins$Extension)
+
+# Renaming the columns for clarity
+colnames(data_twins) <- c("FISNumber", "FamilyNumber", "Extension", "Sex", "Zyg", "Age", "QoL", "Sat", "Hap", "Flo", "EMHC", "SMHC", "PMHC", "Age_sc")
+
+# how many individuals of each zygosity?
+zyg_frequencies <- table(data_twins[,"Zyg"])
+zygosities <- c("MZM", "DZM", "MZF", "DZF", "DOSmf", "DOSfm")
+rownames(zyg_frequencies) <- zygosities
+zyg_frequencies
+
+# MZM   DZM   MZF   DZF DOSmf DOSfm 
+# 695   391  2115   918   558   535
+
+describe(data_twins[, c("Age", "Sex", "QoL", "Sat", "Hap", "Flo", "EMHC", "SMHC", "PMHC")]) 
+#n=6 with a missing sex left
+
+subset(data_twins, is.na(data_twins$Sex)) #We can assign sex to these 6 individuals based on zygosity
+data_twins$Sex[is.na(data_twins$Sex) & data_twins$Zyg %in% c(1, 2)] <- 0
+data_twins$Sex[is.na(data_twins$Sex) & data_twins$Zyg %in% c(3, 4)] <- 1
+data_twins$Sex[is.na(data_twins$Sex) & data_twins$Zyg %in% c(5, 6)] <- NA
+#
+#Cross-variable correlations
+cor.test(data_twins$QoL, data_twins$Sat) #0.757131 
+cor.test(data_twins$QoL, data_twins$Hap) #0.7412574 
+cor.test(data_twins$QoL, data_twins$Flo) #0.6906861 
+cor.test(data_twins$QoL, data_twins$EMHC) #0.5913329
+cor.test(data_twins$QoL, data_twins$SMHC) #0.3732284
+cor.test(data_twins$QoL, data_twins$PMHC) #0.4867735
+
+#
+cor.test(data_twins$Sat, data_twins$Hap) #0.7550102 
+cor.test(data_twins$Sat, data_twins$Flo) #0.7112383 
+cor.test(data_twins$Sat, data_twins$EMHC) #0.561041
+cor.test(data_twins$Sat, data_twins$SMHC) #0.358656
+cor.test(data_twins$Sat, data_twins$PMHC) #0.4729856
+#
+cor.test(data_twins$Hap, data_twins$Flo) #0.715039 
+cor.test(data_twins$Hap, data_twins$EMHC) #0.6283197
+cor.test(data_twins$Hap, data_twins$SMHC) #0.3923974
+cor.test(data_twins$Hap, data_twins$PMHC) #0.5236602
+#
+cor.test(data_twins$Flo, data_twins$EMHC) #0.5945883
+cor.test(data_twins$Flo, data_twins$SMHC) #0.498382
+cor.test(data_twins$Flo, data_twins$PMHC) #0.6167895
+#
+#
+##################
+#Wide format
+#
+# Reshape to wide data format 
+total_variables <- dim(data_twins)[2] # better to be flexible in case new variables are added (averages, differences, ...)
+vars2lineup <- colnames(data_twins)[c(1,3:4,6:total_variables)] # the variables required once for each twin
+data_wide <- umx_long2wide(data_twins, famID = "FamilyNumber", twinID = "Extension", 
+                           zygosity = "Zyg", vars2keep = vars2lineup)
+
+
+
+# Subset by zygosity 
+DZ_levels <- c(2,4,5,6)
+dataMZ <- subset(data_wide, !(Zyg %in% DZ_levels))
+dataDZ <- subset(data_wide, Zyg %in% DZ_levels)
+
+
+# First check the correlations #2DZ>MZ->ACE
+(QoL_mz=cor.test(dataMZ$QoL_T1,dataMZ$QoL_T2)) #0.3774608  
+(QoL_dz=cor.test(dataDZ$QoL_T1,dataDZ$QoL_T2)) #0.2636428 
+
+(Sat_mz=cor.test(dataMZ$Sat_T1,dataMZ$Sat_T2)) #0.4005449 
+(Sat_dz=cor.test(dataDZ$Sat_T1,dataDZ$Sat_T2)) #0.2130364 
+
+(Hap_mz=cor.test(dataMZ$Hap_T1,dataMZ$Hap_T2)) #0.4085048 
+(Hap_dz=cor.test(dataDZ$Hap_T1,dataDZ$Hap_T2)) #0.1483032 
+
+(Flo_mz=cor.test(dataMZ$Flo_T1,dataMZ$Flo_T2)) #0.3842038 
+(Flo_dz=cor.test(dataDZ$Flo_T1,dataDZ$Flo_T2)) #0.1471827 
+
+(EMHC_mz=cor.test(dataMZ$EMHC_T1,dataMZ$EMHC_T2)) #0.3106738 
+(EMHC_dz=cor.test(dataDZ$EMHC_T1,dataDZ$EMHC_T2)) #0.0583326 
+
+(SMHC_mz=cor.test(dataMZ$SMHC_T1,dataMZ$SMHC_T2)) #0.39898 
+(SMHC_dz=cor.test(dataDZ$SMHC_T1,dataDZ$SMHC_T2)) #0.1445766 
+
+(PMHC_mz=cor.test(dataMZ$PMHC_T1,dataMZ$PMHC_T2)) #0.3734 
+(PMHC_dz=cor.test(dataDZ$PMHC_T1,dataDZ$PMHC_T2)) #0.1221665 
+
+#
+#Cross-twin cross-trait correlations are estimated in the saturated model
+#
+
+#Twin models
+
+source("miFunctions.R")
+mxOption(NULL, "Default optimizer", "SLSQP")
+#
+# ----------------------------------------------------------------------------------------------------------------------
+# PREPARE DATA
+
+mzData   <- subset(data_wide, (Zyg==3 | Zyg==1))
+dzData   <- subset(data_wide, (Zyg==4 | Zyg==2 | Zyg==5 | Zyg==6))
+
+# Select Variables for Analysis
+vars      <- c('QoL','Sat', 'Hap', 'Flo', 'EMHC', 'SMHC', 'PMHC')              # list of variables names
+nv        <- 7                         # number of variables
+ntv       <- nv*2                      # number of total variables
+selVars   <- paste(vars,c(rep(1,nv),rep(2,nv)),sep="_T")
+defVars   <- c('Age_sc_T1','Sex_T1','Age_sc_T2','Sex_T2')
+useVars   <- c(selVars,defVars)
+#
+# There were no NAs for the covariates (Age and Sex), so as the model doesn't handle NAs, if there is an NA in any of those, it is because it is an uncomplete pair. Therefore, we write 9999
+mzData$Age_sc_T1[is.na(mzData$Age_sc_T1)] <- mzData$Age_sc_T2[is.na(mzData$Age_sc_T1)]
+mzData$Age_sc_T2[is.na(mzData$Age_sc_T2)] <- mzData$Age_sc_T1[is.na(mzData$Age_sc_T2)]
+mzData$Sex_T1[is.na(mzData$Sex_T1)] <- mzData$Sex_T2[is.na(mzData$Sex_T1)]
+mzData$Sex_T2[is.na(mzData$Sex_T2)] <- mzData$Sex_T1[is.na(mzData$Sex_T2)]
+
+dzData$Age_sc_T1[is.na(dzData$Age_sc_T1)] <- dzData$Age_sc_T2[is.na(dzData$Age_sc_T1)]
+dzData$Age_sc_T2[is.na(dzData$Age_sc_T2)] <- dzData$Age_sc_T1[is.na(dzData$Age_sc_T2)]
+dzData$Sex_T1[is.na(dzData$Sex_T1)] <- dzData$Sex_T2[is.na(dzData$Sex_T1)]
+dzData$Sex_T2[is.na(dzData$Sex_T2)] <- dzData$Sex_T1[is.na(dzData$Sex_T2)]
+
+# Select Data for Analysis
+mzData   <- subset(mzData, (Zyg==3 | Zyg==1), c(useVars))
+dzData   <- subset(dzData, (Zyg==4 | Zyg==2 | Zyg==5 | Zyg==6), c(useVars))
+
+# Generate Descriptive Statistics
+colMeans(mzData,na.rm=TRUE)
+colMeans(dzData,na.rm=TRUE)
+cov(mzData,use="complete")
+cov(dzData,use="complete")
+#
+# cvd1 see variances
+diag(cov(mzData,use="complete"))
+diag(cov(dzData,use="complete"))
+# cvd2
+#
+# Set Starting Values 
+svMe      <- c(0)                   # start value for means
+svPa      <- .3                        # start value for path coefficient
+svPe      <- .5                        # start value for path coefficient for e
+
+#
+# cvd1
+svb0 = parsb0
+svbsex=parsbsex
+svbage=parsbage 
+# cvd2
+#
+#
+# Create Labels
+labMeMZ   <- labVars("meanMZ",selVars)
+labMeDZ   <- labVars("meanDZ",selVars)
+#
+labMeZ    <- labVars("mean",selVars)
+labCvMZ   <- labLower("covMZ",ntv)
+labCvDZ   <- labLower("covDZ",ntv)
+labCvZ    <- labLower("covZ",ntv)
+labVaMZ   <- labDiag("covMZ",ntv)
+labVaDZ   <- labDiag("covDZ",ntv)
+labVaZ    <- labDiag("covZ",ntv)
+#
+# ----------------------------------------------------------------------------------------------------------------------
+# PREPARE MODEL
+defAge    <- mxMatrix( type="Full", nrow=1, ncol=ntv, free=FALSE,
+                       # cvd1
+                       labels=c("data.Age_sc_T1","data.Age_sc_T2"), name="Age" )
+#Comparison CFI
+# defAge <- mxMatrix( type="Full", nrow=1, ncol=ntv, free=FALSE,
+#                     labels=rep(c("data.Age_sc_T1","data.Age_sc_T2"), each=nv),
+#                     name="Age" )
+# cvd2
+#pathB1     <- mxMatrix( type="Full", nrow=1, ncol=ntv, free=TRUE, values=.01, 
+#              labels=c("bAge_QoL_T1","bAge_Sat_T1", "bAge_Hap_T1","bAge_Flo_T1", "bAge_Emp_T1", 
+#                      "bAge_QoL_T2","bAge_Sat_T2", "bAge_Hap_T2","bAge_Flo_T2", "bAge_Emp_T2"), name="b1" )
+# cvd1
+pathB1     <- mxMatrix( type="Full", nrow=1, ncol=ntv, free=c(T,T,T,T,T,T,T), # TRUE, 
+                        values=rep(0,nv), # c(parsbage), 
+                        labels=c("bAge_QoL","bAge_Sat", "bAge_Hap","bAge_Flo", "bAge_EMHC", "bAge_SMHC", "bAge_PMHC"), name="b1" )
+# cvd2
+# cvd1
+defSex      <- mxMatrix( type="Full", nrow=1, ncol=ntv, free=FALSE,
+                         labels=c('data.Sex_T1','data.Sex_T2'), name="Sex" )
+#CFI comparison
+# defSex <- mxMatrix( type="Full", nrow=1, ncol=ntv, free=FALSE,
+#                     labels=rep(c("data.Sex_T1","data.Sex_T2"), each=nv),
+#                     name="Sex" )
+# cvd2
+#pathB2     <- mxMatrix( type="Full", nrow=1, ncol=ntv, free=TRUE, values=.2, 
+#                labels=c("bSex_QoL_T1","bSex_Sat_T1", "bSex_Hap_T1","bSex_Flo_T1", "bSex_Emp_T1", 
+#                        "bSex_QoL_T2","bSex_Sat_T2", "bSex_Hap_T2","bSex_Flo_T2", "bSex_Emp_T2"), name="b2" ) # Sex effects
+#
+pathB2     <- mxMatrix( type="Full", nrow=1, ncol=ntv, free=c(T,T,F,F,F,T,T), 
+                        values=c(0.05, 0.5, 0, 0, 0, 0.05,0.05), # c(parsbsex), 
+                        labels=c("bSex_QoL","bSex_Sat","bSex_Hap","bSex_Flo", "bSex_EMHC", "bSex_SMHC", "bSexPMHC"), name="b2" ) # Sex effects
+
+# Create Algebra for expected Mean Matrices
+meanG     <- mxMatrix( type="Full", nrow=1, ncol=ntv, free=TRUE, values=svMe, labels=labVars("mean",vars), name="meanG" )
+
+expMeanG <- mxAlgebra( meanG + Sex*b2 + Age*b1, name="expMeanG")
+
+inclusions   <- list (meanG, expMeanG, defAge, defSex, pathB1, pathB2 )
+
+# Fit Common Pathway ACE Model
+# Common pathway since MHC is indicated by 3 factors
+# Create factors for domain satifaction ratings
+# ------------------------------------------------------------------------------                                           
+
+svPa <- .4 # start value for path coefficient
+svPe <- .5 # start value for path coefficient for e
+
+# Number of latent variables (common MHC + 4 other WB phenotypes)
+nl        <- 5
+
+# Create Labels
+labMe     <- paste("mean",vars,sep="_")
+# ------------------------------------------------------------------------------
+# PREPARE MODEL
+
+# ACE Model
+
+# Create Matrices for Variance Components latent variables
+covA <- mxMatrix( type="Symm", nrow=nl, ncol=nl, free=TRUE, values=valDiag(svPa,nl), label=labLower("VA",nl), name="VA" )
+covC <- mxMatrix( type="Symm", nrow=nl, ncol=nl, free=TRUE, values=valDiag(svPa,nl), label=labLower("VC",nl), name="VC" )
+covE <- mxMatrix( type="Symm", nrow=nl, ncol=nl, free=TRUE, values=valDiag(svPa,nl), label=labLower("VE",nl), name="VE" )
+
+# Create Matrices for Variance Components for specific factors
+covAs <- mxMatrix( type="Diag", nrow=nv, ncol=nv, free=TRUE, values=valDiag(svPa,nv), label=labDiag("VAs",nv), name="VAs" )
+covCs <- mxMatrix( type="Diag", nrow=nv, ncol=nv, free=TRUE, values=valDiag(svPa,nv), label=labDiag("VCs",nv), name="VCs" )
+covEs <- mxMatrix( type="Diag", nrow=nv, ncol=nv, free=TRUE, values=valDiag(svPa,nv), label=labDiag("VEs",nv), name="VEs" )
+
+# fix residuals for A,C,E to zero for other 4 phenotypes
+diag(covAs$values)[1:4] <- 0
+diag(covAs$free)[1:4] <- FALSE
+diag(covCs$values)[1:4] <- 0
+diag(covCs$free)[1:4] <- FALSE
+diag(covEs$values)[1:4] <- 0
+diag(covEs$free)[1:4] <- FALSE
+
+
+# Set up of constraints and starting values of factor loadings on latent phenotypes
+# Note that the first MHC variable is fixed to 1 for model identification
+# As noted above, the loadings of the 4 other phenotypes on their own
+# latent factor (to make the model work) are fixed to 1
+
+#       free                                values
+#          MHC    D1   D2   D3  D4  D5    SWL    D1    D2   D3   D4   D5
+# MHC1      F     F    F     F   F  F       1    0     0     0    0    0
+# MHC2      T     F    F     F   F  F      .5   .0     0     0    0    0
+# MHC3      T     F    F     F   F  F      .5   .0     0     0    0    0
+# WB1       F     T    F     F   F  F       0    1     0     0    0    0
+# WB2       F     F    T     F   F  F       0    0     1     0    0    0
+# WB3       F     F    F     T   F  F       0    0     0     1    0    0
+# WB4       F     F    F     F   T  F       0    0     0     0    1    0
+# WB5       F     F    F     F   F  T       0    0     0     0    0    1
+
+# Factor loading matrix (7 variables x 5 factors)
+# svfl      <- matrix(c(1,rep(.5,2),rep(0,4),
+#                       rep(0,3),1,rep(0,3),
+#                       rep(0,4),1,rep(0,2),
+#                       rep(0,5),1,0,
+#                       rep(0,6),1),7,5)
+# 
+# frfl      <- c(FALSE,rep(TRUE,2),rep(FALSE,4),
+#                rep(FALSE,7),
+#                rep(FALSE,7),
+#                rep(FALSE,7),
+#                rep(FALSE,7))
+
+svfl      <- matrix(c(1,rep(0,6),
+                      rep(0,1),1,rep(0,5),
+                      rep(0,2),1,rep(0,4),
+                      rep(0,3),1,rep(0,3),
+                      rep(0,4),1,rep(0.5,2)),7,5)
+
+frfl      <- c(rep(FALSE,7),
+               rep(FALSE,7),
+               rep(FALSE,7),
+               rep(FALSE,7),
+               rep(FALSE,5), rep(TRUE,2))
+# Matrix for factor loadings on latent phenotype
+pathFl    <- mxMatrix( type="Full", nrow=nv, ncol=nl, free=frfl, 
+                       values=svfl, labels=labFull("fl",nv,nl), name="fl" )
+
+# Matrices A, C, and E compute variance components of domain indicators
+# covAd      <- mxAlgebra( expression=fl %&% VA + VAs, name="A" )
+# covCd      <- mxAlgebra( expression=fl %&% VC + VCs, name="C" )
+# covEd      <- mxAlgebra( expression=fl %&% VE + VEs, name="E" )
+
+covAd <- mxAlgebra( expression = fl %*% VA %*% t(fl) + VAs, name="A" )
+covCd <- mxAlgebra( expression = fl %*% VC %*% t(fl) + VCs, name="C" )
+covEd <- mxAlgebra( expression = fl %*% VE %*% t(fl) + VEs, name="E" )
+
+# Matrices for standardized common variance components
+covSAc      <- mxAlgebra( expression=VA /(VA+VC+VE), name="SAc" )
+covSCc      <- mxAlgebra( expression=VC /(VA+VC+VE), name="SCc" )
+covSEc      <- mxAlgebra( expression=VE /(VA+VC+VE), name="SEc" )
+
+# Create Algebra for expected Variance/Covariance Matrices in MZ & DZ twins
+covP      <- mxAlgebra( expression= A+C+E, name="V" )
+covMZ     <- mxAlgebra( expression= A+C, name="cMZ" )
+#covDZ     <- mxAlgebra( expression= 0.5%x%A+ 0.25%x%D, name="cDZ" ) # for dominance
+covDZ     <- mxAlgebra( expression= 0.5%x%A+ C, name="cDZ" )
+expCovMZ <- mxAlgebra( expression= rbind( cbind(V, cMZ), cbind(t(cMZ), V)), name="expCovMZ" )
+expCovDZ <- mxAlgebra( expression= rbind( cbind(V, cDZ), cbind(t(cDZ), V)), name="expCovDZ" )
+
+
+# Create Data Objects for Multiple Groups
+dataMZ <- mxData( observed=mzData, type="raw" )
+dataDZ <- mxData( observed=dzData, type="raw" )
+
+# Create Expectation Objects for Multiple Groups
+expMZ     <- mxExpectationNormal( covariance="expCovMZ", means="expMeanG", dimnames=selVars)
+expDZ     <- mxExpectationNormal( covariance="expCovDZ", means="expMeanG", dimnames=selVars)
+funML     <- mxFitFunctionML()
+
+# Create Model Objects for Multiple Groups
+pars      <- list(pathFl, covA, covC, covE, covAd, covCd, covEd, 
+                  covP, covAs, covCs, covEs, covSAc, covSCc, covSEc)
+modelMZ   <- mxModel( name="MZ", inclusions, pars, covMZ, expCovMZ, dataMZ, expMZ, funML )
+modelDZ   <- mxModel( name="DZ", inclusions, pars, covDZ, expCovDZ, dataDZ, expDZ, funML )
+multi     <- mxFitFunctionMultigroup( c("MZ","DZ") )
+
+# Build & Run Model 
+modelCP   <- mxModel( "mulCP_SWLc", pars, modelMZ, modelDZ, multi )
+
+check_params <- omxGetParameters(modelCP)
+length(names(check_params))
+# always good to check whether you estimate what you expect
+
+#tick <- proc.time()[3]
+gc()
+fitCP <- mxRun(modelCP, intervals = F)
+#fitCP <- mxTryHard(modelCP, extraTries = 10,bestInitsOutput=T, intervals=FALSE)
+#tock <- proc.time()[3]
+#tock-tick
+
+summary(fitCP)
+
+# Run AE model (fix both general C and specific C to zero)
+modelCP_AE <- mxModel( fitCP, name="CP_AE" )
+modelCP_AE <- omxSetParameters( modelCP_AE, labels=c(unique(c(fitCP$VC$labels)) ,
+                                                     diag(fitCP$VCs$labels)), free=FALSE, values=0 )
+
+# Check number of parameters
+check_params <- omxGetParameters(modelCP_AE)
+length(names(check_params))
+
+# Set options
+#modelCP_AE <- mxOption(model= modelCP_AE, key="Number of Threads", value= 32 )
+
+# Run model
+#tick <- proc.time()[3]
+fitCP_AE <- mxRun(modelCP_AE, intervals = F)
+#fitCP_AE <- mxTryHard( modelCP_AE, extraTries = 10,bestInitsOutput=T, intervals=FALSE)
+#tock <- proc.time()[3]
+#tock-tick
+
+summary(fitCP_AE)
+
+mxCompare(fitCP, fitCP_AE)
+
+# LATENT LEVEL (MAIN RESULTS)
+Tot_var <- fitCP_AE$VA$values+fitCP_AE$VE$values
+fitCP_AE$VA$values/Tot_var
+fitCP_AE$VE$values/Tot_var
+cov2cor(fitCP_AE$VA$values)
+cov2cor(fitCP_AE$VE$values)
+
+# Calculate standardized first loading
+Lat_var <- Tot_var[1,1] 
+sqrt(Lat_var) / sqrt(Lat_var + diag(Vs)[1])
+
+save.image("/data/natalia/MHC/CPath_env_20251114.RData")
+saveRDS(fitCP_AE, file = "/data/natalia/MHC/AE_cP_model.rds")
+
+
+# Run CE model
+modelCE   <- mxModel( fitCP, name="twoCEvc" )
+modelCE   <- omxSetParameters( modelCE, labels=labLower("VA",nv), 'strict' = FALSE, free=FALSE, values=0 )
+modelCE   <- omxSetParameters( modelCE, labels=labLower("VC",nv), 'strict' = FALSE, free=TRUE, values=.6 )
+fitCE     <- mxRun( modelCE, intervals=F )
+fitGofs(fitCE); fitEstCis(fitCE)
+
+
+
+
+# Run E model
+modelE    <- mxModel( fitCP_AE, name="twoEvc" )
+modelE    <- omxSetParameters( modelE, labels=labLower("VA",nv), 'strict' = FALSE, free=FALSE, values=0 )
+fitE      <- mxRun( modelE, intervals=F )
+fitGofs(fitE); fitEstCis(fitE)
+
+# Print Comparative Fit Statistics
+mxCompare( fitCP, nested <- list(fitCP_AE, fitCE, fitE) )
+#round(rbind(fitACE$US$result,fitAE$US$result,fitCE$US$result,fitE$US$result),4)
